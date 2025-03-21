@@ -1,0 +1,14 @@
+{
+  "name": "finopshubs-ui",
+  "version": "1.0.0",
+  "description": "FinOps Expert UI with web-based interface",
+  "scripts": {
+    "frontend": "cd frontend && npm run dev",
+    "backend": "cd backend && python -m app.main",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "install-all": "npm install && cd frontend && npm install && cd ../backend && pip install -r requirements.txt"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+} 
