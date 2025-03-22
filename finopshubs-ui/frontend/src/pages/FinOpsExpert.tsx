@@ -2,13 +2,20 @@ import React, { useState } from "react";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { SendIcon, Loader2 } from "lucide-react";
+import { SendIcon, Loader2, ExternalLink } from "lucide-react";
 import { api } from "../lib/api";
+
+interface Source {
+  title: string;
+  url: string;
+  description?: string;
+}
 
 interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  sources?: Source[];
 }
 
 const FinOpsExpert: React.FC = () => {
@@ -60,6 +67,7 @@ const FinOpsExpert: React.FC = () => {
         role: "assistant",
         content: response.data.answer || "Sorry, I couldn't process your request.",
         timestamp: new Date().toISOString(),
+        sources: response.data.sources || [] // Add sources from the API response
       };
       
       setConversation(prev => [...prev, assistantMessage]);
@@ -81,6 +89,30 @@ const FinOpsExpert: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Function to render markdown for assistant messages
+  const renderMarkdown = (content: string) => {
+    // This is a simple markdown renderer
+    // For a real app, you would use a library like react-markdown
+    
+    // Replace markdown links with HTML links
+    let processedContent = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline">${text}</a>`;
+    });
+    
+    // Replace headers
+    processedContent = processedContent.replace(/^# (.*?)$/gm, '<h1 class="text-xl font-bold my-2">$1</h1>');
+    processedContent = processedContent.replace(/^## (.*?)$/gm, '<h2 class="text-lg font-bold my-2">$1</h2>');
+    processedContent = processedContent.replace(/^### (.*?)$/gm, '<h3 class="text-md font-bold my-2">$1</h3>');
+    
+    // Replace bold text
+    processedContent = processedContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    
+    // Replace line breaks with <br> tags
+    processedContent = processedContent.replace(/\n/g, '<br>');
+    
+    return { __html: processedContent };
   };
 
   return (
@@ -118,7 +150,34 @@ const FinOpsExpert: React.FC = () => {
                       : "bg-muted"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  {message.role === "assistant" ? (
+                    <>
+                      <div dangerouslySetInnerHTML={renderMarkdown(message.content)} />
+                      {message.sources && message.sources.length > 0 && (
+                        <div className="mt-4 pt-2 border-t border-gray-200">
+                          <p className="text-sm font-semibold mb-1">Sources:</p>
+                          <ul className="text-sm space-y-1">
+                            {message.sources.map((source, idx) => (
+                              <li key={idx} className="flex items-start gap-1">
+                                <ExternalLink className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                <a 
+                                  href={source.url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-blue-500 hover:underline"
+                                  title={source.description || ""}
+                                >
+                                  {source.title}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                  )}
                   <p className="text-xs opacity-70 mt-1">
                     {new Date(message.timestamp).toLocaleTimeString()}
                   </p>

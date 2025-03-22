@@ -148,11 +148,15 @@ async def ask_finops_question(question_request: QuestionRequest):
         import re
         markdown_links = re.findall(r'\[(.*?)\]\((https?://[^\s)]+)\)', answer)
         for title, url in markdown_links:
-            sources.append({
-                "title": title,
-                "url": url
-            })
+            # Check if this is already in the sources list (avoid duplicates)
+            if not any(s.get("url") == url for s in sources):
+                sources.append({
+                    "title": title,
+                    "url": url,
+                    "description": f"Source for information on {title}"
+                })
         
+        logger.info(f"Extracted {len(sources)} sources from response")
         return AnswerResponse(answer=answer, sources=sources)
     except Exception as e:
         logger.error(f"Error processing FinOps question: {str(e)}")
