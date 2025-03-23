@@ -1809,8 +1809,19 @@ if __name__ == "__main__":
     elif choice == "9":
         question = input("\nEnter your FinOps question: ")
     else:
-        question = finops_questions[int(choice) - 1]
-    
+        # Add error handling to prevent failures with empty or invalid input
+        try:
+            choice_num = int(choice) if choice.strip() else 1  # Default to first question if empty
+            # Ensure the choice is within valid range
+            if choice_num < 1 or choice_num > len(finops_questions):
+                print(f"Invalid choice. Defaulting to question 1.")
+                choice_num = 1
+            question = finops_questions[choice_num - 1]
+        except ValueError:
+            # Handle non-numeric input
+            print(f"Invalid choice '{choice}'. Defaulting to question 1.")
+            question = finops_questions[0]  # Default to first question
+
     # Define the default configuration
     config = {
         'enhancement_enabled': True,

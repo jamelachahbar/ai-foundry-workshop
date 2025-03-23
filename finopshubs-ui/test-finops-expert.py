@@ -93,13 +93,56 @@ def test_ask_endpoint(question):
         else:
             print(f"Answer: {answer}")
         
+        # Check for agent thoughts
+        agent_thoughts = data.get('agent_thoughts')
+        if agent_thoughts:
+            print("\nAgent thoughts found:")
+            if len(agent_thoughts) > 200:
+                print(f"{agent_thoughts[:200]}...\n[Thoughts truncated, total length: {len(agent_thoughts)} chars]")
+            else:
+                print(agent_thoughts)
+        else:
+            print("\nNo agent thoughts found in the response")
+        
+        # Check for markdown tables
+        table_count = answer.count("\n|")
+        if table_count > 0:
+            print(f"\n📊 Found {table_count} table rows in the response")
+            
+            # Try to extract a sample table
+            import re
+            table_match = re.search(r"(\|.+\|\n\|[-:]+\|\n\|.+\|)", answer)
+            if table_match:
+                table_sample = table_match.group(1)
+                print("\nSample table found:")
+                print(table_sample[:200] + "..." if len(table_sample) > 200 else table_sample)
+            
+        # Check for code blocks
+        code_blocks = answer.count("```")
+        if code_blocks > 0:
+            print(f"\n💻 Found {code_blocks // 2} code blocks in the response")
+            
+            # Try to extract a sample code block
+            import re
+            code_match = re.search(r"```(?:\w+)?\n(.+?)\n```", answer, re.DOTALL)
+            if code_match:
+                code_sample = code_match.group(1)
+                print("\nSample code found:")
+                print(code_sample[:200] + "..." if len(code_sample) > 200 else code_sample)
+        
         # Print sources
         sources = data.get('sources', [])
         if sources:
             print("\nSources extracted:")
             for i, source in enumerate(sources, 1):
-                print(f"{i}. {source.get('title')} - {source.get('url')}")
+                is_valid = source.get('is_valid', True)
+                validity_marker = "✅" if is_valid else "⚠️"
+                print(f"{i}. {validity_marker} {source.get('title')} - {source.get('url')}")
             print(f"\nTotal sources found: {len(sources)}")
+            
+            # Count valid vs. invalid sources
+            valid_count = sum(1 for s in sources if s.get('is_valid', True))
+            print(f"Valid sources: {valid_count}, Invalid sources: {len(sources) - valid_count}")
         else:
             print("\nNo sources found in the response")
         
@@ -123,7 +166,10 @@ def run_all_tests():
         "What is FinOps?",
         "How do Azure Reserved Instances work?",
         "What are best practices for tagging cloud resources?",
-        "How can I set up budget alerts for my cloud costs?"
+        "How can I set up budget alerts for my cloud costs?",
+        "Compare the pricing tiers for Azure Cost Management in a table format",
+        "Show me a PowerShell script to analyze Azure resource usage",
+        "List the key FinOps metrics and KPIs in a structured format"
     ]
     
     ask_results = []

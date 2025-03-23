@@ -11,11 +11,18 @@ interface Source {
   description?: string;
 }
 
+interface Citation {
+  number: string;
+  url: string;
+  title: string;
+}
+
 interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
   sources?: Source[];
+  citations?: Citation[];
 }
 
 const FinOpsExpert: React.FC = () => {
@@ -65,9 +72,9 @@ const FinOpsExpert: React.FC = () => {
       // Add assistant response to conversation
       const assistantMessage: Message = {
         role: "assistant",
-        content: response.data.answer || "Sorry, I couldn't process your request.",
+        content: response.data.formatted_answer || response.data.answer || "Sorry, I couldn't process your request.",
         timestamp: new Date().toISOString(),
-        sources: response.data.sources || [] // Add sources from the API response
+        citations: response.data.citations || [] // Store citations from the API response
       };
       
       setConversation(prev => [...prev, assistantMessage]);
@@ -96,7 +103,27 @@ const FinOpsExpert: React.FC = () => {
     // This is a simple markdown renderer
     // For a real app, you would use a library like react-markdown
     
-    // Replace markdown links with HTML links
+    // First, let's handle the Sources section separately to avoid line break issues
+    let sourcesSection = '';
+    const sourcesSectionRegex = /Sources:[\s\n]+((\[[0-9]+\]\s+\[[^\]]+\]\([^)]+\)[\s\n]*)+)$/;
+    const fallbackSourcesRegex = /Sources:[\s\n]+(.+)$/s;
+    const sourcesMatch = content.match(sourcesSectionRegex);
+    
+    if (sourcesMatch) {
+      // Extract the sources section
+      sourcesSection = sourcesMatch[0];
+      // Remove it from the main content for now
+      content = content.replace(sourcesSectionRegex, '');
+    } else {
+      // Check for any sources section that doesn't match our expected format
+      const fallbackMatch = content.match(fallbackSourcesRegex);
+      if (fallbackMatch) {
+        sourcesSection = fallbackMatch[0];
+        content = content.replace(fallbackSourcesRegex, '');
+      }
+    }
+    
+    // Replace markdown links with HTML links in the main content
     let processedContent = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
       return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline">${text}</a>`;
     });
@@ -109,8 +136,68 @@ const FinOpsExpert: React.FC = () => {
     // Replace bold text
     processedContent = processedContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     
-    // Replace line breaks with <br> tags
+    // Replace line breaks with <br> tags for the main content
     processedContent = processedContent.replace(/\n/g, '<br>');
+    
+    // Now handle the sources section if we found one
+    if (sourcesSection) {
+      const sources = sourcesSection.replace(/^Sources:[\s\n]+/, '');
+      
+      // Check if the sources match our expected format
+      const hasExpectedFormat = /\[([0-9]+)\]\s+\[(.*?)\]\((.*?)\)/.test(sources);
+      
+      if (hasExpectedFormat) {
+        const formattedSources = `<div class="mt-6 pt-3 border-t border-gray-200 bg-gray-50 rounded-md p-4">
+          <p class="text-sm font-semibold mb-3 flex items-center text-gray-700">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            References
+          </p>
+          <ul class="text-sm space-y-3">
+            ${sources.split(/[\r\n]+/).filter((line: string) => line.trim()).map((line: string) => {
+              // Extract source number, title and URL from the markdown format
+              const match = line.match(/\[([0-9]+)\]\s+\[(.*?)\]\((.*?)\)/);
+              if (match) {
+                const [_, number, title, url] = match;
+                return `<li class="flex items-start">
+                  <div class="flex-shrink-0 bg-blue-100 text-blue-800 rounded-full h-5 w-5 flex items-center justify-center mr-2 mt-0.5">
+                    <span class="text-xs font-medium">${number}</span>
+                  </div>
+                  <a href="${url}" 
+                     target="_blank" 
+                     rel="noopener noreferrer" 
+                     class="text-blue-600 hover:text-blue-800 hover:underline transition-colors duration-200 flex-grow"
+                     title="Open reference in new tab">
+                    ${title}
+                    <svg xmlns="http://www.w3.org/2000/svg" class="inline-block h-3 w-3 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                </li>`;
+              }
+              return '';
+            }).join('')}
+          </ul>
+        </div>`;
+        
+        // Append the formatted sources section to the main content
+        processedContent += formattedSources;
+      } else {
+        // Fallback formatting for sources that don't match our expected pattern
+        const fallbackSources = `<div class="mt-6 pt-3 border-t border-gray-200 bg-gray-50 rounded-md p-4">
+          <p class="text-sm font-semibold mb-3 flex items-center text-gray-700">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            References
+          </p>
+          <div class="text-sm pl-2">${sources}</div>
+        </div>`;
+        
+        processedContent += fallbackSources;
+      }
+    }
     
     return { __html: processedContent };
   };
@@ -153,27 +240,7 @@ const FinOpsExpert: React.FC = () => {
                   {message.role === "assistant" ? (
                     <>
                       <div dangerouslySetInnerHTML={renderMarkdown(message.content)} />
-                      {message.sources && message.sources.length > 0 && (
-                        <div className="mt-4 pt-2 border-t border-gray-200">
-                          <p className="text-sm font-semibold mb-1">Sources:</p>
-                          <ul className="text-sm space-y-1">
-                            {message.sources.map((source, idx) => (
-                              <li key={idx} className="flex items-start gap-1">
-                                <ExternalLink className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                                <a 
-                                  href={source.url} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-blue-500 hover:underline"
-                                  title={source.description || ""}
-                                >
-                                  {source.title}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      {/* Sources are rendered as part of the formatted_answer content */}
                     </>
                   ) : (
                     <p className="whitespace-pre-wrap">{message.content}</p>

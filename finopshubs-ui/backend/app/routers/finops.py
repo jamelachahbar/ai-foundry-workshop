@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Body, Request, Response, Depends
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Body, Request, Response, Depends, status
+from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel, Field
 import sys
 import os
 import logging
@@ -11,6 +11,15 @@ import io
 import importlib.util
 import json
 import traceback
+
+# Import the new Azure AI-based FinOps expert
+try:
+    from finops_expert_azure_ai import finops_expert_with_azure_ai, MOCK_MODE, ENHANCEMENT_ENABLED, test_azure_ai_connection, test_deepseek_connection
+    USING_AZURE_AI = True
+except ImportError:
+    from finops_expert_with_bing_grounding import finops_expert_with_bing, MOCK_MODE
+    USING_AZURE_AI = False
+    ENHANCEMENT_ENABLED = True
 
 # Setup logging
 logging.basicConfig(
@@ -41,11 +50,18 @@ router = APIRouter(
 # Pydantic models
 class QuestionRequest(BaseModel):
     question: str
+    conversation_history: Optional[List[Dict[str, Any]]] = []
     options: Optional[Dict[str, Any]] = None
+
+class Citation(BaseModel):
+    number: str
+    url: str
+    title: str
 
 class AnswerResponse(BaseModel):
     answer: str
-    sources: Optional[List[Dict[str, str]]] = None
+    citations: List[Citation] = []
+    formatted_answer: str
 
 # Global variable to cache the module
 _finops_expert_module = None
@@ -121,50 +137,57 @@ async def test_api():
     return {"status": "ok", "message": "FinOps API is working"}
 
 # Routes
-@router.post("/expert/ask", response_model=AnswerResponse)
-async def ask_finops_question(question_request: QuestionRequest):
+@router.post("/ask", response_model=AnswerResponse)
+async def ask_finops_question(request: QuestionRequest):
+    """
+    Process a FinOps question and return an expert answer with citations.
+    """
+    question = request.question
+    conversation_history = request.conversation_history
+    options = request.options or {}
+    
+    logger.info(f"Received question: {question}")
+    logger.info(f"Using Azure AI: {USING_AZURE_AI}, Mock Mode: {MOCK_MODE}, Enhancement: {ENHANCEMENT_ENABLED}")
+    
+    if options:
+        logger.info(f"Options provided: {options}")
+    
     try:
-        # Load the finops_expert module
-        finops_expert = load_finops_expert()
+        # Call the appropriate FinOps expert function
+        if USING_AZURE_AI:
+            logger.info("Using Azure AI Foundry for FinOps expert")
+            # Extract relevant options
+            config = {
+                "use_mock_mode": options.get("use_mock_mode", MOCK_MODE),
+                "enhancement_enabled": options.get("enhancement_enabled", ENHANCEMENT_ENABLED)
+            }
+            result = finops_expert_with_azure_ai(question, conversation_history, config)
+        else:
+            logger.info("Using direct Bing integration for FinOps expert")
+            result = finops_expert_with_bing(question, conversation_history)
         
-        # If module couldn't be loaded, raise an appropriate error
-        if finops_expert is None:
-            logger.error(f"FinOps Expert module not available for question: {question_request.question}")
-            raise HTTPException(
-                status_code=500,
-                detail="FinOps Expert module is not available. Please check server logs."
-            )
+        # Log the number of citations
+        citation_count = len(result.get("citations", []))
+        logger.info(f"Generated answer with {citation_count} citations")
         
-        # Extract any options from the request
-        options = question_request.options if question_request.options else {}
-        
-        # Call the finops_expert_with_bing function with options
-        logger.info(f"Processing FinOps question: {question_request.question}")
-        answer = finops_expert.finops_expert_with_bing(question_request.question, config=options)
-        
-        # Extract sources if available in the answer text
-        sources = []
-        # Simple extraction of markdown links as sources
-        import re
-        markdown_links = re.findall(r'\[(.*?)\]\((https?://[^\s)]+)\)', answer)
-        for title, url in markdown_links:
-            # Check if this is already in the sources list (avoid duplicates)
-            if not any(s.get("url") == url for s in sources):
-                sources.append({
-                    "title": title,
-                    "url": url,
-                    "description": f"Source for information on {title}"
-                })
-        
-        logger.info(f"Extracted {len(sources)} sources from response")
-        return AnswerResponse(answer=answer, sources=sources)
+        # Return the response
+        return result
     except Exception as e:
         logger.error(f"Error processing FinOps question: {str(e)}")
-        logger.error(f"Exception traceback: {traceback.format_exc()}")
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing your question: {str(e)}"
         )
+
+# Add the expert/ask endpoint to match frontend URL structure
+@router.post("/expert/ask", response_model=AnswerResponse)
+async def ask_finops_expert_question(request: QuestionRequest):
+    """
+    Alternative endpoint that matches the frontend URL structure.
+    This simply calls the same functionality as the /ask endpoint.
+    """
+    logger.info("Request received at /expert/ask endpoint - forwarding to main handler")
+    return await ask_finops_question(request)
 
 @router.post("/expert/test-bing")
 async def test_bing_connection():
@@ -273,5 +296,86 @@ async def health_check():
             "status": "error",
             "message": "FinOps Expert module is not available"
         }
+
+@router.get("/config", response_model=Dict[str, Any])
+async def get_config():
+    """Get the current configuration for the FinOps expert"""
+    config = {
+        "using_azure_ai": USING_AZURE_AI,
+        "mock_mode": MOCK_MODE,
+        "enhancement_enabled": ENHANCEMENT_ENABLED
+    }
+    
+    return config
+
+@router.post("/config", response_model=Dict[str, Any])
+async def update_config(config: Dict[str, Any] = Body(...)):
+    """Update the configuration for the FinOps expert"""
+    global MOCK_MODE, ENHANCEMENT_ENABLED
+    
+    # Store original values to compare if anything changed
+    original_config = {
+        "mock_mode": MOCK_MODE,
+        "enhancement_enabled": ENHANCEMENT_ENABLED
+    }
+    
+    # Update the configuration
+    if "mock_mode" in config:
+        MOCK_MODE = config["mock_mode"]
+    
+    if "enhancement_enabled" in config:
+        ENHANCEMENT_ENABLED = config["enhancement_enabled"]
+    
+    # Log the changes
+    changes = []
+    if original_config["mock_mode"] != MOCK_MODE:
+        changes.append(f"Mock mode: {original_config['mock_mode']} -> {MOCK_MODE}")
+    
+    if original_config["enhancement_enabled"] != ENHANCEMENT_ENABLED:
+        changes.append(f"Enhancement: {original_config['enhancement_enabled']} -> {ENHANCEMENT_ENABLED}")
+    
+    if changes:
+        logger.info(f"Configuration updated: {', '.join(changes)}")
+    else:
+        logger.info("Configuration unchanged")
+    
+    return {
+        "using_azure_ai": USING_AZURE_AI,
+        "mock_mode": MOCK_MODE,
+        "enhancement_enabled": ENHANCEMENT_ENABLED,
+        "changes": changes
+    }
+
+@router.get("/test-connections", response_model=Dict[str, Any])
+async def test_connections():
+    """Test the connections to Azure AI and DeepSeek if available"""
+    result = {
+        "using_azure_ai": USING_AZURE_AI,
+        "mock_mode": MOCK_MODE,
+        "enhancement_enabled": ENHANCEMENT_ENABLED
+    }
+    
+    if USING_AZURE_AI:
+        if not MOCK_MODE:
+            # Test Azure AI connection
+            azure_connection = test_azure_ai_connection()
+            result["azure_ai_connection"] = azure_connection
+        else:
+            result["azure_ai_connection"] = "Skipped (Mock mode enabled)"
+        
+        if ENHANCEMENT_ENABLED:
+            # Test DeepSeek connection
+            try:
+                deepseek_connection = test_deepseek_connection()
+                result["deepseek_connection"] = deepseek_connection
+            except Exception as e:
+                logger.error(f"Error testing DeepSeek connection: {str(e)}")
+                result["deepseek_connection"] = f"Error: {str(e)}"
+        else:
+            result["deepseek_connection"] = "Skipped (Enhancement disabled)"
+    else:
+        result["error"] = "Azure AI Foundry not available"
+    
+    return result
 
 # Add more routes as needed 
