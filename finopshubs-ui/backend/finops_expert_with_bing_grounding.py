@@ -216,7 +216,17 @@ Your knowledge covers the full spectrum of FinOps topics including:
 
 When answering questions, always search the web for the most current information to ensure your responses reflect the latest developments, tools, and best practices in the FinOps space.
 
-Always cite your sources when providing information."""
+Always cite your sources when providing information.
+When using Bing search, always prioritize direct URLs to:
+
+- Official Microsoft documentation (learn.microsoft.com or docs.microsoft.com)
+- Microsoft GitHub repositories (especially github.com/microsoft/finops-toolkit)
+- Other trusted sources such as azure.microsoft.com or techcommunity.microsoft.com
+
+Avoid returning Bing search result URLs (`www.bing.com/search`) or placeholder URLs. 
+Instead, extract and include the original content source URLs directly in your citations.
+
+"""
         
         # Create the agent with required preview header for Bing grounding
         agent = project_client.agents.create_agent(
@@ -337,7 +347,7 @@ def enhance_with_deepseek(question, bing_result):
         citations = bing_result["citations"]
         github_urls = bing_result.get("github_urls", [])
         mslearn_urls = bing_result.get("mslearn_urls", [])
-        
+
         # Prepare citation text
         citation_text = ""
         if citations:
@@ -377,7 +387,7 @@ def enhance_with_deepseek(question, bing_result):
                 mslearn_content += f"{i}. [Microsoft Official Documentation]({readable_url})\n"
             
             mslearn_content += "\nThese official Microsoft documentation resources provide authoritative guidance on this topic.\n"
-        
+
         # Define the finops system prompt
         finops_system_prompt = """You are an expert FinOps technical writer and Azure cost management specialist with deep knowledge of the Microsoft FinOps Toolkit GitHub repository. Your task is to enhance and refine the information provided to you, maintaining factual accuracy while improving clarity, organization, and actionability.
 
@@ -1670,8 +1680,6 @@ def log_run_steps_details(thread_id, run_id):
         print(f"Error analyzing run steps: {str(e)}")
         print(traceback.format_exc())
 
-# Add this function before the main function
-
 def check_and_repair_bing_connection():
     """Check the status of the Bing connection and attempt repair if needed"""
     global bing_connection
@@ -1822,8 +1830,8 @@ if __name__ == "__main__":
         'enhancement_temperature': 0.2,
         'max_search_results': 20,
         'cleanup_agent': True,
-        'max_improvement_iterations': 3,
-        'force_github_knowledge': True
+        'max_improvement_iterations': 4,
+        'force_github_knowledge': False
     }
     
     # Get answer
@@ -1958,7 +1966,7 @@ def test_bing_sample():
         return False
         
 # Update the main function to include the new test
-if __name__ == "__main__":
+# if __name__ == "__main__":
     try:
         print("\n🤖 FinOps Toolkit Expert with Bing Grounding")
         print("------------------------------------------------")
