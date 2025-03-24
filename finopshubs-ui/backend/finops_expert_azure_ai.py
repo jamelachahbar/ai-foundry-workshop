@@ -9,9 +9,13 @@ and provide grounded answers to FinOps-related questions.
 import os
 import logging
 import json
+import requests
 from typing import Dict, List, Any, Optional, Union
 from dotenv import load_dotenv
-
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import SystemMessage, UserMessage
+from azure.core.credentials import AzureKeyCredential
+from finops_insights_helpers import extract_insights_from_sources
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +34,7 @@ except ImportError:
     logger.warning("Azure AI Projects SDK not installed. Real-time search will be unavailable.")
     logger.warning("Install with: pip install azure-ai-projects azure-identity")
 
-# Try to import DeepSeek SDK for enhancement
+# # Try to import DeepSeek SDK for enhancement
 try:
     from azure.ai.inference import InferenceClient
     DEEPSEEK_AVAILABLE = True
@@ -40,8 +44,31 @@ except ImportError:
     logger.warning("DeepSeek enhancement not available. Install azure-ai-inference package")
 
 # Global configurations
-MOCK_MODE = os.environ.get("FINOPS_MOCK_MODE", "False").lower() in ("true", "1", "t")
 ENHANCEMENT_ENABLED = os.environ.get("FINOPS_ENHANCEMENT_ENABLED", "True").lower() in ("true", "1", "t")
+
+# Load environment variables
+load_dotenv()
+
+# Initialize DeepSeek client
+try:
+    endpoint = os.getenv("AZURE_INFERENCE_ENDPOINT")
+    key = os.getenv("AZURE_INFERENCE_KEY")
+    model_name = os.getenv("MODEL_NAMEDS", "DeepSeek-R1")
+
+    if not endpoint or not key:
+        raise ValueError("Missing required environment variables: AZURE_INFERENCE_ENDPOINT or AZURE_INFERENCE_KEY")
+
+    client = ChatCompletionsClient(
+        endpoint=endpoint,
+        credential=AzureKeyCredential(key),
+        headers={"x-ms-model-mesh-model-name": model_name}
+    )
+    logger.info(f"✅ DeepSeek client initialized | Model: {model_name}")
+    ENHANCEMENT_ENABLED = True
+except Exception as e:
+    logger.error(f"❌ DeepSeek client initialization failed: {str(e)}")
+    client = None
+    ENHANCEMENT_ENABLED = False
 
 def load_env_file():
     """Load environment variables from .env file"""
@@ -51,10 +78,6 @@ def load_env_file():
     foundry_keys = ["PROJECT_CONNECTION_STRING", "MODEL_DEPLOYMENT_NAME", "BING_CONNECTION_NAME"]
     deepseek_keys = ["AZURE_ENDPOINT", "AZURE_API_KEY"]
     
-    # If we're in mock mode, don't check for Azure AI Foundry keys
-    if MOCK_MODE:
-        logger.info("Running in mock mode, skipping Azure AI Foundry key checks")
-        return True
     
     missing_foundry_keys = []
     for key in foundry_keys:
@@ -84,9 +107,6 @@ def load_env_file():
 
 def test_azure_ai_connection() -> bool:
     """Test if the Azure AI Foundry connection works"""
-    if MOCK_MODE:
-        logger.info("Running in mock mode, skipping Azure AI Foundry connection test")
-        return True
         
     if not AZURE_SDK_AVAILABLE:
         logger.warning("Azure AI Projects SDK not installed, skipping connection test")
@@ -146,11 +166,11 @@ def test_deepseek_connection() -> bool:
         
         logger.info("Sending test request to DeepSeek model...")
         response = inference_client.get_chat_completions(
-            deployment_name="deepseek-ai-r1", 
+            deployment_name=os.environ["MODEL_NAMEDS"],
             messages=[
                 {"role": "user", "content": test_prompt}
             ],
-            max_tokens=50,
+            max_tokens=1000,
             temperature=0.5
         )
         
@@ -165,36 +185,107 @@ def test_deepseek_connection() -> bool:
         logger.error(f"Error testing DeepSeek connection: {str(e)}")
         return False
 
-def get_simulated_search_results(question: str) -> List[Dict[str, Any]]:
-    """Return simulated search results for testing purposes"""
-    logger.info(f"Generating simulated search results for question: {question}")
-    
-    # Simple mapping of keywords to simulated sources
-    sources = [
-        {
-            "url": "https://learn.microsoft.com/en-us/azure/cost-management-billing/finops/",
-            "title": "What is FinOps? - Microsoft Learn",
-            "snippet": "FinOps, or cloud financial management, is the discipline of managing cloud costs. "
-                     "It involves tracking cloud spend, optimizing usage, and ensuring accountability.",
-            "date": "2023-10-15"
-        },
-        {
-            "url": "https://www.finops.org/introduction/what-is-finops/",
-            "title": "What is FinOps? - FinOps Foundation",
-            "snippet": "FinOps is an operational framework and cultural practice that brings together technology, "
-                     "finance, and business teams to manage cloud costs effectively.",
-            "date": "2023-09-01"
-        },
-        {
-            "url": "https://azure.microsoft.com/en-us/blog/best-practices-for-cloud-cost-optimization/",
-            "title": "Best Practices for Cloud Cost Optimization - Azure Blog",
-            "snippet": "Learn how to optimize your Azure costs with right-sizing, scheduling, autoscaling, "
-                     "and other proven strategies for cloud cost management.",
-            "date": "2023-08-20"
-        }
-    ]
-    
-    return sources
+
+def get_grounded_sources_with_foundry(query: str) -> List[Dict[str, Any]]:
+    """
+    Use Azure AI Foundry agent with Bing grounding to get grounded responses.
+    Returns a list of sources (URL, title, snippet).
+    """
+    try:
+        from azure.ai.projects import AIProjectClient
+        from azure.ai.projects.models import MessageRole, BingGroundingTool
+        from azure.identity import DefaultAzureCredential
+
+        logger.info("🔍 Using Azure AI Foundry with Bing Grounding for query: %s", query)
+
+        project_client = AIProjectClient.from_connection_string(
+            credential=DefaultAzureCredential(),
+            conn_str=os.environ["PROJECT_CONNECTION_STRING"],
+        )
+
+        # Get Bing connection
+        bing_connection = project_client.connections.get(connection_name=os.environ["BING_CONNECTION_NAME"])
+        bing_tool = BingGroundingTool(connection_id=bing_connection.id)
+
+        # Create temporary agent
+        agent = project_client.agents.create_agent(
+            model=os.environ["MODEL_DEPLOYMENT_NAME"],
+            name="finops-bing-agent",
+            instructions="You are a FinOps expert. Use Bing grounding to provide real-time insights.",
+            tools=bing_tool.definitions,
+            headers={"x-ms-enable-preview": "true"},
+            content_type="text/plain",
+            metadata={"source": "finops-bing-agent"},
+            description="FinOps expert agent using Bing grounding"
+        )
+
+        thread = project_client.agents.create_thread()
+        project_client.agents.create_message(
+            thread_id=thread.id,
+            role=MessageRole.USER,
+            content=query,
+        )
+
+        run = project_client.agents.create_and_process_run(thread_id=thread.id, agent_id=agent.id)
+
+        logger.info("Current run status: %s", run.status)
+
+        if str(run.status).lower() not in ["succeeded", "completed"]:
+            logger.warning("Agent run did not finish successfully: %s", run.status)
+            project_client.agents.delete_agent(agent.id)
+            return []
+
+
+        response_message = project_client.agents.list_messages(thread_id=thread.id).get_last_message_by_role(
+            MessageRole.AGENT
+        )
+
+        sources = []
+
+        if response_message:
+            # Inline citations from text messages
+            for text_msg in getattr(response_message, "text_messages", []):
+                for citation in getattr(text_msg, "citations", []):
+                    if hasattr(citation, "url_citation"):
+                        sources.append({
+                            "title": citation.url_citation.title,
+                            "url": citation.url_citation.url,
+                            "description": getattr(citation.url_citation, "snippet", ""),
+                            "is_valid": True
+                        })
+
+            # Explicit citations
+            for annotation in getattr(response_message, "url_citation_annotations", []):
+                sources.append({
+                    "title": annotation.url_citation.title,
+                    "url": annotation.url_citation.url,
+                    "description": getattr(annotation.url_citation, "snippet", ""),
+                    "is_valid": True
+                })
+        logger.info("🧠 Agent raw response message:")
+        if response_message:
+            for text_msg in getattr(response_message, "text_messages", []):
+                logger.info(f"- Message content: {text_msg.text.value}")
+                if hasattr(text_msg, "citations"):
+                    logger.info(f"  ↪ Citations: {text_msg.citations}")
+            if response_message.url_citation_annotations:
+                logger.info(f"📌 Found {len(response_message.url_citation_annotations)} explicit citations.")
+            else:
+                logger.warning("⚠️ No explicit citations found in url_citation_annotations.")
+
+        # Cleanup
+        project_client.agents.delete_agent(agent.id)
+
+        if not sources:
+            logger.warning("⚠️ No grounded sources found from Bing grounding.")
+        else:
+            logger.info(f"✅ Retrieved {len(sources)} sources from Bing grounding.")
+
+        return sources
+
+    except Exception as e:
+        logger.exception("❌ Exception during Bing grounding via Foundry")
+        return []
 
 def enhance_with_deepseek(question: str, bing_result: Dict[str, Any]) -> str:
     """
@@ -213,8 +304,8 @@ def enhance_with_deepseek(question: str, bing_result: Dict[str, Any]) -> str:
     
     try:
         # Get required variables
-        endpoint = os.environ.get("AZURE_ENDPOINT")
-        api_key = os.environ.get("AZURE_API_KEY")
+        endpoint = os.environ.get("AZURE_INFERENCE_ENDPOINT")
+        api_key = os.environ.get("AZURE_INFERENCE_KEY")
         
         if not endpoint or not api_key:
             logger.warning("Missing DeepSeek credentials, returning original answer")
@@ -258,7 +349,7 @@ but improves clarity, comprehensiveness, and actionability.
         
         logger.info("Sending enhancement request to DeepSeek model...")
         response = inference_client.get_chat_completions(
-            deployment_name="deepseek-ai-r1", 
+            deployment_name="DeepSeek-R1", 
             messages=[
                 {"role": "system", "content": "You are a FinOps expert assistant helping enhance answers about cloud financial management."},
                 {"role": "user", "content": prompt}
@@ -279,225 +370,101 @@ but improves clarity, comprehensiveness, and actionability.
         logger.error(f"Error enhancing answer with DeepSeek: {str(e)}")
         return bing_result.get("answer", "")
 
-def finops_expert_with_azure_ai(question: str, conversation_history: Optional[List[Dict]] = None, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+
+def finops_expert_with_azure_ai(question: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
     """
-    Process a FinOps question using Azure AI Foundry with Bing grounding
+    Get expert FinOps advice using DeepSeek and Bing search
     
     Args:
-        question: The user's FinOps-related question
-        conversation_history: Optional conversation history for context
-        config: Optional configuration parameters
-            - enhancement_enabled: Whether to enhance the answer with DeepSeek (default: True)
-            - use_mock_mode: Override the global MOCK_MODE setting
-            
+        question: The user's question
+        conversation_history: Optional conversation history
+        
     Returns:
-        Dictionary containing the answer, citations, and metadata
+        Dictionary containing answer, citations, and formatted answer
     """
-    logger.info(f"Processing question via FinOps Expert with Azure AI: {question}")
-    
-    # Initialize conversation history and config if not provided
-    if conversation_history is None:
-        conversation_history = []
-    
-    if config is None:
-        config = {}
-    
-    # Check if config overrides the global settings
-    use_mock = config.get("use_mock_mode", MOCK_MODE)
-    enhancement = config.get("enhancement_enabled", ENHANCEMENT_ENABLED)
-    
-    logger.info(f"Mock mode: {use_mock}, Enhancement enabled: {enhancement}")
-    
-    # Check if we should use mock mode
-    if use_mock or not AZURE_SDK_AVAILABLE or not load_env_file():
-        logger.info("Using mock mode for FinOps expert")
+    if not client:
+        raise ValueError("DeepSeek client not initialized")
         
-        # Simplified mock response
-        mock_answer = {
-            "answer": "FinOps (Cloud Financial Operations) is a framework for managing cloud costs effectively. "
-                     "It involves tracking cloud spend, optimizing usage, and ensuring accountability across teams. "
-                     "By implementing FinOps practices, organizations can better control their cloud spending while "
-                     "maintaining operational efficiency.",
-            "citations": [
-                {"number": "1", "url": "https://learn.microsoft.com/en-us/azure/cost-management-billing/finops/", 
-                 "title": "What is FinOps? - Microsoft Learn"},
-                {"number": "2", "url": "https://www.finops.org/introduction/what-is-finops/", 
-                 "title": "What is FinOps? - FinOps Foundation"}
-            ],
-            "formatted_answer": "FinOps (Cloud Financial Operations) is a framework for managing cloud costs effectively. "
-                               "It involves tracking cloud spend, optimizing usage, and ensuring accountability across teams. "
-                               "By implementing FinOps practices, organizations can better control their cloud spending while "
-                               "maintaining operational efficiency.\n\n"
-                               "Sources:\n"
-                               "[1] [What is FinOps? - Microsoft Learn](https://learn.microsoft.com/en-us/azure/cost-management-billing/finops/)\n"
-                               "[2] [What is FinOps? - FinOps Foundation](https://www.finops.org/introduction/what-is-finops/)"
-        }
-        
-        return mock_answer
-    
     try:
-        # Create the project client
-        logger.info("Creating AI Project client")
-        project_client = AIProjectClient.from_connection_string(
-            credential=DefaultAzureCredential(),
-            conn_str=os.environ["PROJECT_CONNECTION_STRING"],
+        # First, get relevant sources from Bing
+        sources = get_grounded_sources_with_foundry(question)
+
+        
+        if not sources:
+            logger.warning("No sources found from Bing search")
+            return {
+                "answer": "I couldn't find any relevant information about this FinOps topic. Please try rephrasing your question.",
+                "citations": [],
+                "formatted_answer": "No relevant information found."
+            }
+            
+        # Extract insights from sources
+        insights = extract_insights_from_sources(sources, question)
+        
+        # Create system prompt
+        system_prompt = """You are a Microsoft FinOps toolkit expert. Your goal is to provide clear, actionable advice about cloud financial management.
+When answering:
+1. Be specific and practical
+2. Include Azure-specific details when relevant
+3. Reference sources to support your points
+4. Structure your response with clear sections
+5. Focus on real-world implementation"""
+
+        # Create user prompt with context
+        user_prompt = f"""Based on the following sources:
+
+{insights}
+
+Please provide a comprehensive answer to: {question}
+
+Structure your response with clear sections and include specific, actionable recommendations."""
+
+        # Get response from DeepSeek
+        response = client.complete(
+            messages=[
+                SystemMessage(content=system_prompt),
+                UserMessage(content=user_prompt)
+            ],
+            temperature=0.3,
+            max_tokens=2048
         )
         
-        # Get the Bing connection
-        bing_connection_name = os.environ["BING_CONNECTION_NAME"]
-        logger.info(f"Getting Bing connection: {bing_connection_name}")
-        bing_connection = project_client.connections.get(
-            connection_name=bing_connection_name
-        )
-        conn_id = bing_connection.id
-        logger.info(f"Bing connection ID: {conn_id}")
+        answer = response.choices[0].message.content
         
-        # Initialize Bing grounding tool
-        bing = BingGroundingTool(connection_id=conn_id)
-        
-        # Create the agent with Bing tool
-        with project_client:
-            model_name = os.environ["MODEL_DEPLOYMENT_NAME"]
-            logger.info(f"Creating agent with model: {model_name}")
+        # Format citations
+        citations = []
+        for i, source in enumerate(sources[:5], 1):  # Limit to top 5 sources
+            citation = {
+                "number": str(i),
+                "title": source["title"],
+                "url": source["url"]
+            }
+            citations.append(citation)
             
-            # Define the system prompt for the agent
-            finops_instructions = """You are a FinOps expert assistant specialized in cloud financial management. 
-            Your goal is to help users understand cloud cost optimization, governance, and FinOps best practices.
-            Provide comprehensive, accurate, and practical advice. When answering:
-            1. Use the latest information from your web search capabilities
-            2. Focus on practical, actionable advice for cloud cost optimization
-            3. Consider multi-cloud environments (Azure, AWS, GCP) when relevant
-            4. Explain FinOps concepts clearly for both technical and non-technical users
-            5. Cite your sources when providing specific recommendations or data
-            """
+        # Format the answer with citations
+        formatted_answer = f"{answer}\n\n## Sources\n"
+        for citation in citations:
+            formatted_answer += f"\n[{citation['title']}]({citation['url']})"
             
-            # Create the agent
-            agent = project_client.agents.create_agent(
-                model=model_name,
-                name="finops-assistant",
-                instructions=finops_instructions,
-                tools=bing.definitions,
-                headers={"x-ms-enable-preview": "true"},
-            )
-            
-            logger.info(f"Created agent, ID: {agent.id}")
-            
-            # Create a thread for the conversation
-            thread = project_client.agents.create_thread()
-            logger.info(f"Created thread, ID: {thread.id}")
-            
-            # Add conversation history if provided
-            if conversation_history and len(conversation_history) > 0:
-                logger.info(f"Adding {len(conversation_history)} messages from conversation history")
-                for message in conversation_history:
-                    role = MessageRole.USER if message.get("role") == "user" else MessageRole.AGENT
-                    project_client.agents.create_message(
-                        thread_id=thread.id,
-                        role=role,
-                        content=message.get("content", "")
-                    )
-            
-            # Send the user's question
-            logger.info(f"Sending question: {question}")
-            message = project_client.agents.create_message(
-                thread_id=thread.id,
-                role=MessageRole.USER,
-                content=question,
-            )
-            
-            # Run the agent to process the question
-            logger.info("Processing the question with the agent")
-            run = project_client.agents.create_and_process_run(thread_id=thread.id, agent_id=agent.id)
-            logger.info(f"Run finished with status: {run.status}")
-            
-            if run.status == "failed":
-                error_msg = run.last_error if run.last_error else "Unknown error"
-                logger.error(f"Run failed: {error_msg}")
-                return {
-                    "answer": f"I encountered an error while trying to answer your question: {error_msg}",
-                    "citations": [],
-                    "formatted_answer": f"I encountered an error while trying to answer your question: {error_msg}"
-                }
-            
-            # Get the agent's response
-            response_message = project_client.agents.list_messages(thread_id=thread.id).get_last_message_by_role(
-                MessageRole.AGENT
-            )
-            
-            if response_message:
-                # Build the response text
-                response_text = ""
-                for text_message in response_message.text_messages:
-                    response_text += f"{text_message.text.value}\n\n"
-                response_text = response_text.strip()
-                
-                # Prepare citations
-                citations = []
-                for i, annotation in enumerate(response_message.url_citation_annotations):
-                    citation = {
-                        "number": str(i+1),  # Convert to string to match expected type
-                        "url": annotation.url_citation.url,
-                        "title": annotation.url_citation.title
-                    }
-                    citations.append(citation)
-                
-                # Clean up resources first before doing enhancement
-                # This is important to avoid keeping resources hanging
-                logger.info("Cleaning up Azure AI Foundry resources")
-                project_client.agents.delete_agent(agent.id)
-                
-                # Prepare the initial result
-                result = {
-                    "answer": response_text,
-                    "citations": citations
-                }
-                
-                # Enhance with DeepSeek if enabled
-                if enhancement and DEEPSEEK_AVAILABLE:
-                    logger.info("Enhancing answer with DeepSeek...")
-                    enhanced_answer = enhance_with_deepseek(question, result)
-                    result["answer"] = enhanced_answer
-                
-                # Format the answer with markdown citations
-                formatted_answer = result["answer"]
-                if citations:
-                    formatted_answer += "\n\nSources:\n"
-                    for citation in citations:
-                        formatted_answer += f"[{citation['number']}] [{citation['title']}]({citation['url']})\n"
-                
-                result["formatted_answer"] = formatted_answer.strip()
-                return result
-            else:
-                # Clean up resources
-                logger.info("Cleaning up Azure AI Foundry resources")
-                project_client.agents.delete_agent(agent.id)
-                
-                logger.warning("No response received from the agent")
-                return {
-                    "answer": "I couldn't generate a response to your question. Please try again.",
-                    "citations": [],
-                    "formatted_answer": "I couldn't generate a response to your question. Please try again."
-                }
-                
-    except Exception as e:
-        logger.error(f"Error using Azure AI Foundry: {str(e)}")
         return {
-            "answer": f"I encountered an error while processing your question: {str(e)}",
-            "citations": [],
-            "formatted_answer": f"I encountered an error while processing your question: {str(e)}"
+            "answer": answer,
+            "citations": citations,
+            "formatted_answer": formatted_answer
         }
+        
+    except Exception as e:
+        logger.error(f"Error in finops_expert_with_azure_ai: {str(e)}")
+        raise
 
 # Test the module if run directly
 if __name__ == "__main__":
     print("="*50)
     print("FinOps Expert with Azure AI Foundry")
     print("="*50)
-    print(f"Mock Mode: {MOCK_MODE}")
     print(f"Enhancement Enabled: {ENHANCEMENT_ENABLED}")
     
     # Test the connections
-    if not MOCK_MODE:
-        print(f"Testing Azure AI Foundry connection: {test_azure_ai_connection()}")
+    print(f"Testing Azure AI Foundry connection: {test_azure_ai_connection()}")
     
     if ENHANCEMENT_ENABLED:
         print(f"Testing DeepSeek connection: {test_deepseek_connection()}")

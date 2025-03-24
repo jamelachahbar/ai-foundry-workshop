@@ -186,7 +186,7 @@ def extract_definition_from_sources(source_texts, finops_terms):
         for source in source_texts:
             sentences = re.split(r'(?<=[.!?])\s+', source)
             for sentence in sentences:
-                if any(f" {term} " in f" {sentence.lower()} " for term in ["finops", "financial operations", "cloud financial management"]):
+                if any(f" {term} " in f" {sentence.lower()} " for term in ["finops", "financial operations", "cloud financial management", "finops toolkit", "microsoft finops toolkit"]):
                     if any(verb in sentence.lower() for verb in ["is", "refers to", "means", "involves", "represents", "entails", "encompasses"]):
                         # Clean and format
                         definition = sentence.strip().capitalize()
@@ -421,7 +421,7 @@ def extract_metrics_from_sources(source_texts, finops_terms):
 def extract_implementation_from_sources(source_texts, finops_terms):
     """Extract implementation steps or approaches from source texts"""
     implementations = []
-    implementation_indicators = ["step", "process", "approach", "methodology", "framework", "implement", "adopt", "deploy", "establish"]
+    implementation_indicators = ["step", "process", "approach", "methodology", "framework", "implement", "adopt", "deploy", "establish", "use", "build", "enable"]
     
     for source in source_texts:
         sentences = re.split(r'(?<=[.!?])\s+', source)
@@ -524,8 +524,8 @@ def extract_specific_topic_insights(topic: str, sources: List[Dict[str, str]], s
                 insights.append(f"**{topic}** appears to be a schema or data format used in {extract_context_from_title(title, topic)}")
             
             # If title contains toolkit, app, or service
-            if any(term in title.lower() for term in ["toolkit", "app", "service", "platform", "framework"]):
-                for term in ["toolkit", "app", "service", "platform", "framework"]:
+            if any(term in title.lower() for term in ["toolkit", "app", "service", "platform", "framework", "tool", "solution"]):
+                for term in ["toolkit", "app", "service", "platform", "framework", "tool", "solution"]:
                     if term in title.lower():
                         insights.append(f"**{topic}** is a {term} related to {extract_context_from_title(title, topic)}")
                         break

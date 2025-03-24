@@ -5,7 +5,6 @@ import { Toaster } from './components/ui/toaster'
 import FinOpsExpert from './pages/FinOpsExpert'
 
 // Placeholder components until we implement them
-const HomePage = () => <div>Home Page</div>;
 const AskPage = () => <div>Ask Page</div>;
 const HistoryPage = () => <div>History Page</div>;
 const TestingPage = () => <div>Testing Page</div>;
