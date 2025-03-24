@@ -207,34 +207,21 @@ def create_finops_bing_agent():
         # Enhanced instructions to cover all FinOps topics, not just the toolkit
         instructions = """You are a comprehensive FinOps expert who provides accurate and helpful information about all aspects of FinOps practices, including but not limited to Microsoft Azure cost management.
 
-Your knowledge covers the full spectrum of FinOps topics including:
-1. General FinOps principles and frameworks
-2. Cloud cost optimization strategies across various providers
-3. Microsoft FinOps Toolkit resources and implementations
-4. Industry best practices for financial operations in the cloud
-5. Latest trends and developments in the FinOps field
+Your knowledge covers the full spectrum of FinOps topics...
+...
++ When unsure of the correct link or source, disclaim your uncertainty rather than invent a new link.
++ Never generate random or unverified domain links. 
++ If you cannot find relevant info, say \"I do not have a verified source for that.\" 
+...
 
-When answering questions, always search the web for the most current information to ensure your responses reflect the latest developments, tools, and best practices in the FinOps space.
-
-Always cite your sources when providing information.
-When using Bing search, always prioritize direct URLs to:
-
-- Official Microsoft documentation (learn.microsoft.com or docs.microsoft.com)
-- Microsoft GitHub repositories (especially github.com/microsoft/finops-toolkit)
-- Other trusted sources such as azure.microsoft.com or techcommunity.microsoft.com
-
-Avoid returning Bing search result URLs (`www.bing.com/search`) or placeholder URLs. 
-Instead, extract and include the original content source URLs directly in your citations.
-
-"""
-        
+"""        
         # Create the agent with required preview header for Bing grounding
         agent = project_client.agents.create_agent(
             model=model_name_deployment,
             name="FinOps-Expert-Agent",
             instructions=instructions,
             tools=bing_tool.definitions,
-            temperature=0.2,  # Lower temperature for more factual responses
+            temperature=0.4,
             headers={"x-ms-enable-preview": "true"}  # Essential for proper Bing grounding functionality
         )
         
@@ -336,244 +323,68 @@ def ask_finops_question_with_bing(agent, question):
         }
 
 # Function to enhance answers with DeepSeek-R1
+# Modify the enhancement instructions to focus on actionable insights
+finops_system_prompt = """
+    You are a FinOps expert specializing in Microsoft Azure Cost Management and FinOps principles. 
+
+    Your task is to enhance an existing answer based on relevant resources. Avoid boilerplate or redundant information. If a piece of information is not relevant to the question, discard it. Prioritize actionable insights and practical solutions. If there are no relevant new insights or references, do not artificially invent solutions or add irrelevant boilerplate.
+
+    Key instructions:
+    - Only reference the specific resources from Bing search or GitHub (avoid generic statements).
+    - Maintain technical accuracy, clarity, and focus on user-specific needs.
+    - Do not repeat content unnecessarily. Make the response concise and informative.
+    - If you cannot confirm or verify a resource, do not include it in the answer.
+    - Focus on giving step-by-step guidance when possible.
+    """
+
+# Enhance function improvements with specific relevance check
 def enhance_with_deepseek(question, bing_result):
-    """Enhance the Bing-grounded answer with DeepSeek-R1's reasoning"""
+    """Enhance the Bing-grounded answer with DeepSeek-R1's reasoning without repetition or unnecessary boilerplate."""
     if not deepseek_client:
         return bing_result["answer"]
-    
+
     try:
         # Extract the Bing answer and citations
         bing_answer = bing_result["answer"]
         citations = bing_result["citations"]
-        github_urls = bing_result.get("github_urls", [])
-        mslearn_urls = bing_result.get("mslearn_urls", [])
 
-        # Prepare citation text
-        citation_text = ""
-        if citations:
-            citation_text = "\n\n## References\n"
-            for i, citation in enumerate(citations, 1):
-                citation_text += f"{i}. [{citation['title']}]({citation['url']})\n"
-        
-        # Special handling for GitHub URLs
-        github_content = ""
-        if github_urls:
-            github_content = "\n\n## Microsoft FinOps Toolkit GitHub Resources\n"
-            github_content += "The following resources from the Microsoft FinOps Toolkit GitHub repository are relevant to this question:\n\n"
-            for i, url in enumerate(github_urls, 1):
-                # Clean up the URLs for better display
-                readable_url = url.replace("www.bing.com/search?q=site%3Agithub.com%2Fmicrosoft%2Ffinops-toolkit", "github.com/microsoft/finops-toolkit")
-                if "=" in readable_url and not "github.com/microsoft/finops-toolkit" in readable_url:
-                    readable_url = "https://github.com/microsoft/finops-toolkit"
-                elif not readable_url.startswith("http"):
-                    readable_url = "https://" + readable_url if not readable_url.startswith("//") else "https:" + readable_url
-                github_content += f"{i}. [FinOps Toolkit Resource]({readable_url})\n"
-            
-            github_content += "\nThese resources contain templates, scripts, and implementation examples that can help with your specific scenario.\n"
-        
-        # Special handling for Microsoft Learn URLs
-        mslearn_content = ""
-        if mslearn_urls:
-            mslearn_content = "\n\n## Microsoft Learn Documentation\n"
-            mslearn_content += "The following Microsoft Learn and Azure documentation resources are relevant to this question:\n\n"
-            for i, url in enumerate(mslearn_urls, 1):
-                # Clean up the URLs for better display
-                readable_url = url
-                if "=" in readable_url and not "learn.microsoft.com" in readable_url and not "docs.microsoft.com" in readable_url:
-                    # Default to cost management docs if URL is not valid
-                    readable_url = "https://learn.microsoft.com/en-us/azure/cost-management-billing/"
-                elif not readable_url.startswith("http"):
-                    readable_url = "https://" + readable_url if not readable_url.startswith("//") else "https:" + readable_url
-                mslearn_content += f"{i}. [Microsoft Official Documentation]({readable_url})\n"
-            
-            mslearn_content += "\nThese official Microsoft documentation resources provide authoritative guidance on this topic.\n"
-
-        # Define the finops system prompt
-        finops_system_prompt = """You are an expert FinOps technical writer and Azure cost management specialist with deep knowledge of the Microsoft FinOps Toolkit GitHub repository. Your task is to enhance and refine the information provided to you, maintaining factual accuracy while improving clarity, organization, and actionability.
-
-        ## Microsoft FinOps Toolkit GitHub Knowledge
-        You are deeply familiar with the Microsoft FinOps Toolkit GitHub repository (https://github.com/microsoft/finops-toolkit) and its contents, including:
-        - Starter kits and reference implementations
-        - Azure Data Factory templates and pipelines
-        - Azure Data Explorer configuration and usage
-        - PowerBI templates and reporting solutions
-        - Automation scripts and deployment tools
-        - Sample code and configuration files
-        - Best practices and implementation guides
-
-        ## Your Enhancement Responsibilities:
-
-        1. Content Organization:
-           - Group related information together under clear section headings
-           - Create a logical flow from problem to solution
-           - Add numbered steps for sequential processes
-           - Use bullet points for features, benefits, or considerations
-        
-        2. Technical Accuracy Enhancement:
-           - Ensure all Azure portal navigation instructions are precise and current
-           - Verify command syntax for PowerShell, Azure CLI, or other tools
-           - Add parameter explanations for any scripts or commands
-           - Clarify technical terms with brief explanations when needed
-           - Incorporate relevant details from the FinOps Toolkit GitHub repository
-        
-        3. GitHub Repository Integration:
-           - Mention specific files, templates, or scripts from the repository when relevant
-           - Explain how to use or adapt repository resources for the user's needs
-           - Provide paths to relevant files or folders within the repository
-           - Describe how the repository components work together
-        
-        4. Actionability Improvement:
-           - Add specific validation steps after each action
-           - Include expected outcomes for troubleshooting steps
-           - Provide clear "if/then" guidance for different scenarios
-           - Add explicit guidance for error states
-           - Include code examples from the repository when helpful
-        
-        5. Presentation Refinement:
-           - Use consistent formatting throughout
-           - Ensure proper use of technical terminology
-           - Maintain professional, concise language
-           - Format code blocks, commands, and syntax properly
-        
-        6. Knowledge Preservation:
-           - Never contradict the provided Microsoft documentation
-           - Maintain all factual information, URLs, and citations
-           - Only add information that clarifies or contextualizes existing content
-           - Do not remove important technical details
-        
-        When processing:
-        1. Maintain all URLs and references from the original content
-        2. Keep all factual information intact - do not introduce new facts not supported by documentation
-        3. Focus on reorganizing, clarifying, and enhancing presentation
-        4. Add appropriate headings, bullet points, and formatting
-        5. Ensure any code or commands are properly formatted in code blocks
-        6. Keep your enhancements focused on the specific user question
-        7. Incorporate relevant GitHub repository knowledge where appropriate
-
-        Your goal is to transform technically accurate but potentially unstructured information into a clear, well-organized, and highly actionable response that leverages the best of Microsoft documentation and the FinOps Toolkit GitHub repository.
-        """
-        
-        # Add the Bing search results as context
+        # Define the user message with better contextual guidance
         user_message = f"""
-        # Original User Question
+        # Original Question:
         {question}
-        
-        # Information from Microsoft Documentation (via Bing search)
+
+        # Bing Answer:
         {bing_answer}
-        
-        # GitHub Repository Context
-        The Microsoft FinOps Toolkit GitHub repository (https://github.com/microsoft/finops-toolkit) contains valuable resources that could be relevant to this question. These include starter kits, reference implementations, templates, scripts, and best practices guides.
-        
-        {'The search identified the following GitHub resources that may be relevant: ' + ', '.join(github_urls) if github_urls else 'No specific GitHub resources were identified in the search, but general repository knowledge may still be relevant.'}
-        
-        # Enhancement Instructions
-        
-        Please enhance this response while maintaining all factual information and citations. Focus on:
-        
-        1. Create a clear introduction summarizing the key points
-        2. Organize the content with informative section headings
-        3. Add step-by-step instructions with numbered lists
-        4. Format code blocks and commands properly
-        5. Ensure all Microsoft documentation links are preserved
-        6. Add troubleshooting guidance where appropriate
-        7. Make it more actionable with validation steps
-        8. Incorporate relevant information from the Microsoft FinOps Toolkit GitHub repository
-        9. Reference specific files, templates, or scripts from the repository when relevant
-        
-        Important: Do not invent new technical information - rely only on what's provided in the Microsoft documentation and your knowledge of the GitHub repository's structure and content.
+
+        # Enhancement Instructions:
+        Please enhance the response by integrating only relevant and actionable insights. Avoid repeating information or adding boilerplate text. Focus on adding value and improving clarity. If there is no new insight or it is irrelevant, please omit it.
+        Also prettify the answers.
         """
-        
-        # Get DeepSeek reasoning with improved parameters
+
+        # Get DeepSeek reasoning with the improved instructions
         response = deepseek_client.complete(
             messages=[
                 SystemMessage(content=finops_system_prompt),
                 UserMessage(content=user_message)
             ],
             model=deepseek_model_name,
-            temperature=0.5,  # Balanced temperature for creative yet accurate content
-            max_tokens=6000,  # More tokens for comprehensive enhancement
-            top_p=0.8        # Balanced top_p for creative rewriting while staying on topic
+            temperature=0.0,  # Make sure the model is deterministic in its output
+            max_tokens=6000
         )
-        
+
         enhanced_content = response.choices[0].message.content
-        
-        # Add the citations from Bing if not already included
-        if citations and not any(citation["url"] in enhanced_content for citation in citations):
-            citation_text = "\n\n## References\n"
-            for i, citation in enumerate(citations, 1):
-                # Make sure URL starts with http/https
-                url = citation['url']
-                if not url.startswith('http'):
-                    url = 'https://' + url.lstrip('/')
-                citation_text += f"{i}. [{citation['title']}]({url})\n"
-            enhanced_content += citation_text
-        
-        # Add GitHub resources section if not already included
-        if github_urls and not "GitHub Resources" in enhanced_content:
-            github_content = "\n\n## Microsoft FinOps Toolkit GitHub Resources\n"
-            github_content += "The following resources from the Microsoft FinOps Toolkit GitHub repository are relevant to this question:\n\n"
-            for i, url in enumerate(github_urls, 1):
-                # Clean up the URL for better display
-                readable_url = url
-                if "www.bing.com/search" in readable_url:
-                    readable_url = "https://github.com/microsoft/finops-toolkit"
-                elif not readable_url.startswith("http"):
-                    readable_url = "https://" + readable_url.lstrip('/')
-                github_content += f"{i}. [FinOps Toolkit Resource]({readable_url})\n"
-            
-            github_content += "\nThese resources contain templates, scripts, and implementation examples that can help with your specific scenario.\n"
-            enhanced_content += github_content
-            
-        # Add Microsoft Learn documentation section if not already included and we have URLs
-        if mslearn_urls and not "Microsoft Learn Documentation" in enhanced_content:
-            mslearn_content = "\n\n## Microsoft Learn Documentation\n"
-            mslearn_content += "The following Microsoft Learn and Azure documentation resources are relevant to this question:\n\n"
-            for i, url in enumerate(mslearn_urls, 1):
-                # Clean up the URL for better display
-                readable_url = url
-                if "www.bing.com/search" in readable_url:
-                    readable_url = "https://learn.microsoft.com/en-us/azure/cost-management-billing/"
-                elif not readable_url.startswith("http"):
-                    readable_url = "https://" + readable_url.lstrip('/')
-                mslearn_content += f"{i}. [Microsoft Official Documentation]({readable_url})\n"
-            
-            mslearn_content += "\nThese official Microsoft documentation resources provide authoritative guidance on this topic.\n"
-            enhanced_content += mslearn_content
-            
-        # If no GitHub URLs but GitHub wasn't mentioned, add a note about the repository
-        if not github_urls and not "github.com/microsoft/finops-toolkit" in enhanced_content:
-            github_note = """
 
-## Additional Resources
-For implementation examples, templates, and scripts related to FinOps in Azure, consider exploring the [Microsoft FinOps Toolkit GitHub repository](https://github.com/microsoft/finops-toolkit). This repository contains valuable resources that can help you implement the guidance provided above.
+        # Add citations and GitHub/MS Learn URLs if necessary, but avoid duplication
+        if citations:
+            enhanced_content += "\n\n## References\n"
+            for citation in citations:
+                enhanced_content += f"{citation['title']}: {citation['url']}\n"
 
-Key sections in the repository:
-- [Templates](https://github.com/microsoft/finops-toolkit/tree/main/templates) - Deployment and configuration templates
-- [Samples](https://github.com/microsoft/finops-toolkit/tree/main/samples) - Sample code and implementation examples
-- [Documentation](https://github.com/microsoft/finops-toolkit/tree/main/docs) - Conceptual and implementation guidance
-"""
-            enhanced_content += github_note
-        
-        # If no Microsoft Learn URLs but also not mentioned in content, add standard Microsoft Learn resources
-        if not mslearn_urls and not any(term in enhanced_content for term in ["learn.microsoft.com", "docs.microsoft.com"]):
-            mslearn_note = """
-
-## Microsoft Learn Documentation
-For comprehensive official guidance on FinOps and Azure Cost Management, refer to these Microsoft Learn resources:
-
-1. [FinOps in Azure](https://learn.microsoft.com/en-us/azure/cost-management-billing/finops/)
-2. [Azure Cost Management Documentation](https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/)
-3. [Cost Management Best Practices](https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/cost-mgt-best-practices)
-4. [Cloud Adoption Framework - Cost Management](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/strategy/business-outcomes/fiscal-outcomes)
-"""
-            enhanced_content += mslearn_note
-        
         return enhanced_content
-        
+
     except Exception as e:
         print(f"⚠️ Error enhancing with DeepSeek: {str(e)}")
-        # Return original answer if enhancement fails
-        return bing_result["answer"]
+        return bing_result["answer"]  # Return the original Bing answer if enhancement fails
 
 # New function - Quality evaluation agent
 def evaluate_answer_quality(question, answer, deepseek_client=None):

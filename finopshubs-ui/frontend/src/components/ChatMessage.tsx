@@ -71,6 +71,9 @@ const ChatMessage: React.FC<{ message: MessageProps }> = ({ message }) => {
           language={cMatch?.[1] || "bash"}
           style={github}
           PreTag="div"
+          CodeTag={
+            "code"
+          }
           {...props}
         >
           {String(children).replace(/\n$/, "")}
